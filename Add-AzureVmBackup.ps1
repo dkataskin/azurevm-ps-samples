@@ -2,16 +2,17 @@
 .Synopsis
    Backup an existing VM with only an OS disk to a new blob.
 .DESCRIPTION
-   
+   Backup an existing VM. The VM has to have an OS disk and no data disks.
+
+   The backups are made as copies of the backing disk blob, with the name convention:
+   <Name of the backing blob of the OS disk, without the .vhd extension>_v_<serviceName>-<vmName>_b_<date in yyyy-mm-dd format>-<backup number of the day>.vhd"
 .EXAMPLE
-   .\Add-DomainControllerAndMemberServer.ps1 -ServiceName AService -Location "West US" -DomainControllerName dc `
-        -VNetName dcvnet -MemberServerName mem
+   .\Add-AzureVmBackup.ps1 -ServiceName aService -Name aVm
 .INPUTS
    None
 .OUTPUTS
    None
 #>
-[CmdletBinding( SupportsShouldProcess=$true, ConfirmImpact='High')]
 Param
 (
     # Service the VM is running on
@@ -53,12 +54,8 @@ if ($vm.VM.DataVirtualHardDisks.Count > 0)
 $vmStopped = $false
 if ($vm.InstanceStatus -eq "ReadyRole" -and $vm.PowerState -eq "Started")
 {
-    $shouldExecute = $PsCmdlet.ShouldProcess("Stop VM '$Name'")
-    if ($shouldExecute)
-    {
-        Stop-AzureVM -ServiceName $ServiceName -Name $Name -StayProvisioned
-        $vmStopped = $true
-    }
+    Stop-AzureVM -ServiceName $ServiceName -Name $Name -StayProvisioned
+    $vmStopped = $true
 }
 
 $osDiskMediaLinkUri = [System.Uri]$vm.VM.OSVirtualHardDisk.MediaLink
@@ -74,7 +71,7 @@ $diskBlobName = $osDiskMediaLinkUri.Segments[2]
 
 $storageAccountName = $osDiskMediaLinkUri.Host.Split(".")[0]
 
-$currentAzureSubscription = Get-AzureSubscription  | Where-Object {$_.IsDefault}
+$currentAzureSubscription = Get-AzureSubscription -Current
 $currentStorageAccountName = $currentAzureSubscription.CurrentStorageAccount
 
 # Change the current storage account
@@ -99,9 +96,9 @@ if ($baseName -eq "")
     throw "Could not extract the base disk name."
 }
 
-$existingBackups = Get-AzureStorageBlob -Container $containerName | Where-Object {$_.Name -ilike "$($baseName)b*"} | Select-Object Name
+$existingBackups = Get-AzureStorageBlob -Container $containerName | Where-Object {$_.Name -ilike "$($baseName)_v_*"} | Select-Object Name
 
-$backupNamePrefix = "b" + (Get-Date -Format "yyyy-MM-dd") + "-"
+$backupNamePrefix = "_v_" + $ServiceName + "-" + $Name + "_b_" + (Get-Date -Format "yyyy-MM-dd") + "-"
 
 $backupNumber = 0
 if($existingBackups -ne $null)

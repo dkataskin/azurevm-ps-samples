@@ -1,6 +1,7 @@
 ﻿<#
 .Synopsis
-   Given a VM OS disk backed up by the Backup-AzureVM.ps1 script, purge the old backups before the last N given.
+   Given a VM OS disk backed up by the Backup-AzureVM.ps1 script, purge the old backups before the last N given. This scripts
+   assumes the backups are stored on the storage account pointed by the current subscription's CurrentStorageAccount property
 .DESCRIPTION
    Purge the old backups of a given VM, with one single disk. Any previous backups, before the last N, being used by a VM are skipped. 
 .EXAMPLE
@@ -23,6 +24,12 @@ Param
     [String]
     $Name,
 
+    # Name of the container where the backups are kept
+    [Parameter(Mandatory=$false)]
+    [String]
+    $ContainerName = "vhds",
+
+
     # Last N backups to keep
     [Parameter(Mandatory=$true)]
     [String]
@@ -41,85 +48,60 @@ if ((Get-Module -ListAvailable Azure) -eq $null)
     throw "Windows Azure Powershell not found! Please install from http://www.windowsazure.com/en-us/downloads/#cmd-line-tools"
 }
 
-$vm = Get-AzureVM -ServiceName $ServiceName -Name $Name -ErrorAction SilentlyContinue
+$BackupVmPrevix = "_v_"
+$backupNamePrefix = "_b_"
 
-if ($vm -eq $null)
+$existingBackups = Get-AzureStorageBlob -Container $ContainerName | Where-Object {$_.Name -ilike $("*" + $BackupVmPrevix + $ServiceName + "-" + $Name + $backupNamePrefix +"*")} | Select-Object Name
+
+$foundBackups = @()
+
+if($existingBackups -ne $null)
 {
-    throw "A virtual machine with name $Name on $ServiceName does not exist."
-}
-
-$osDiskMediaLinkUri = [System.Uri]$vm.VM.OSVirtualHardDisk.MediaLink
-
-if ($osDiskMediaLinkUri.Segments.Count -gt 3)
-{
-    throw "Disk containers only one level deep supported"
-}
-
-# If it is a 3 part segment, first part willbe / second will be the container name, and third part will be the blob name
-$containerName = $osDiskMediaLinkUri.Segments[1].Replace("/","")
-$diskBlobName = $osDiskMediaLinkUri.Segments[2]
-
-$storageAccountName = $osDiskMediaLinkUri.Host.Split(".")[0]
-
-$currentAzureSubscription = Get-AzureSubscription  | Where-Object {$_.IsDefault}
-$currentStorageAccountName = $currentAzureSubscription.CurrentStorageAccount
-
-# Change the current storage account
-if ($storageAccountName -ne $currentStorageAccountName)
-{
-    Set-AzureSubscription -SubscriptionName $currentAzureSubscription.SubscriptionName -CurrentStorageAccount $storageAccountName
-}
-
-function Get-AzurevmBackups
-{
-    Param
-    (
-        # Service the VM is running on
-        [Parameter(Mandatory=$true)]
-        [String]
-        $ServiceName, 
-
-        # Name of the VM
-        [Parameter(Mandatory=$true)]
-        [String]
-        $Name
-    )
-
-    $baseName = ""
-    $suffixLength = 0
-    if ($diskBlobName.EndsWith(".vhd"))
+    foreach ($existingBackup in $existingBackups)
     {
-        # Remove the trailing .vhd
-        $baseName = $diskBlobName.Substring(0, ($diskBlobName.Length - 4))
-        $suffixLength = 4
+        # parse the name
+        $parts = $existingBackup.Name -Split $BackupVmPrevix
+        if ($parts.Count -ne 2)
+        {
+            throw "Unexpected backup format for blob name $existingBackup"
+        }
+
+        $baseName = $parts[0]
+
+        $parts = $parts[1] -split $backupNamePrefix
+        if ($parts.Count -ne 2)
+        {
+            throw "Unexpected backup format for blob name $existingBackup"
+        }
+
+        $backupPart = ""
+        $vmParts = $parts[0] -split "-"
+        if ($parts[1].Endswith(".vhd"))
+        {
+            $backupPart = $parts[1].Substring(0, $parts[1].Length - 4)
+        }
+        else
+        {
+            $backupPart = $parts[1]
+        }
+            
+        $backupParts = $backupPart -split "-"
+        if ($vmParts.Count -ne 2 -and $backupParts.Count -ne 4)
+        {
+            throw "The backup name does not conform to the naming convention."
+        }
+
+        $objBackup = New-Object System.Object
+        $objBackup | Add-Member -type NoteProperty -name ServiceName -value $vmParts[0]
+        $objBackup | Add-Member -type NoteProperty -name VmName -value $vmParts[1]
+        $objBackup | Add-Member -type NoteProperty -name BackupDate -value $($backupParts[0] + "-" + $backupParts[1] + "-" + $backupParts[2])
+        $objBackup | Add-Member -type NoteProperty -name BackupNumber -value $backupParts[3]
+        $objBackup | Add-Member -type NoteProperty -name BlobName -value $existingBackup.Name
+        $objBackup | Add-Member -type NoteProperty -name BackupId -value ([int]$($backupParts[0] + $backupParts[1] + $backupParts[2] + $backupParts[3]))
+
+        $foundBackups += $objBackup
     }
-    else
-    {
-        $baseName = $diskBlobName
-    }
-
-    if ($baseName -eq "")
-    {
-        throw "Could not extract the base disk name."
-    }
-
-    $existingBackups = Get-AzureStorageBlob -Container $containerName | Where-Object {$_.Name -ilike "$($baseName)b*"} | Select-Object Name
-
-
-    $backupNamePrefix = "b"
-
-    $foundBackups = @{}
-
-    if($existingBackups -ne $null)
-    {
-        $baseAndBackupNameLength = $($baseName + $backupNamePrefix).Length
-        $existingBackups | ForEach-Object {$foundBackups.Add([int]($_.Name.Substring($baseAndBackupNameLength, ($_.Name.Length - $baseAndBackupNameLength - $suffixLength)).Replace("-", "")), $_.Name)} 
-    }
-
-    $foundBackups | Sort-Object -Property Name -Descending 
 }
-
-$backups = Get-AzureVmBackups -ServiceName $ServiceName -Name $Name
 
 $existingVmOsDisks = @()
 
@@ -135,18 +117,15 @@ foreach ($vm in $vms)
 }
 
 $index = 1
-$backupIds = $backups.Keys | Sort-Object -Descending
+$foundBackups = $foundBackups | Sort-Object -Property BackupId -Descending
 
-foreach ($key in $backupIds)
+foreach ($foundBackup in $foundBackups)
 {
     if ($index++ -gt $Keep)
     {
-        if (-not($existingVmOsDisks -contains $backups[$key]))
+        if (-not($existingVmOsDisks -contains $foundBackup.BlobName))
         {
-            Remove-AzureStorageBlob -Container $containerName -Blob $backups[$key]
+            Remove-AzureStorageBlob -Container $containerName -Blob $foundBackup.BlobName
         }
     }    
 }
-
-# Restore the original CurrentStorageAccount setting
-Set-AzureSubscription -SubscriptionName $currentAzureSubscription.SubscriptionName -CurrentStorageAccount $currentStorageAccountName
