@@ -59,7 +59,7 @@ if ((Get-Module -ListAvailable Azure) -eq $null)
    Looks up the current subscription's (as set by Set-AzureSubscription cmdlet) affinity groups and creates a new
    affinity group if it does not exist.
 .EXAMPLE
-   New-AzureAffinityGroupIfNotExists -AffinityGroupNme newAffinityGroup -Locstion "West US"
+   New-AzureAffinityGroupIfNotExists -AffinityGroupNme newAffinityGroup -Location "West US"
 .INPUTS
    None
 .OUTPUTS
@@ -154,13 +154,13 @@ function Set-VNetFileValues
         [String]$AffinityGroupName, 
         
         # Address prefix for the Vnet. For the sake of examples in this scripts, the smallest address space possible for Azure is default
-        [String]$VNetAddressPrefix = "10.0.0.0/8", 
+        [String]$VNetAddressPrefix = "10.0.0.0/16", 
         
         # The name of the subnet to be added to the Vnet
-        [String] $DefaultSubnetName = "Subnet-1", 
+        [String] $DefaultSubnetName = "Subnet10", 
         
         # Addres space for the Subnet
-        [String] $SubnetAddressPrefix = "10.0.0.0/29")
+        [String] $SubnetAddressPrefix = "10.0.10.0/24")
     
     [Xml]$xml = New-Object XML
     $xml.Load($FilePath)
