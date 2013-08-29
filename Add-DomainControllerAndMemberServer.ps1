@@ -3,10 +3,20 @@
    Add a domain cotroller and a member server to a cloud service.
 .DESCRIPTION
    This script demonstrates how to add a VM and script it to become a domain controller for a forest, and add a member 
-   server to the domain, by adding them on the same VNet.
+   server to the domain, by adding them on the same VNet. A new VNet is created for the deployment, if a VNet site 
+   with the same name exists, the script does not continue.
 .EXAMPLE
+    Using the default values for the parameters
+
    .\Add-DomainControllerAndMemberServer.ps1 -ServiceName AService -Location "West US" -DomainControllerName dc `
-        -VNetName dcvnet -MemberServerName mem
+        -MemberServerName mem -DomainName "contoso" -TopLevelDomain "com" -VNetName dcvnet -SubnetName "subnet-1"
+
+    Providing the full details of the VNet and VM sizes
+
+    .\Add-DomainControllerAndMemberServer.ps1 -ServiceName AService -Location "West US" -DomainControllerName dc -DCVMSize "Medium" `
+        -MemberServerName mem -MemberVMSize "Medium" -DomainName "contoso" -TopLevelDomain "com" -VNetName dcvnet " `
+        -VNetAddressPrefix "10.0.0.0/4" -SubnetName "subnet-1" -SubnetAddressPrefix "10.0.0.0/4"
+
 .INPUTS
    None
 .OUTPUTS
@@ -27,17 +37,54 @@ Param
     # Name of the DC
     [Parameter(Mandatory=$true)]
     [String]
-    $DomainControllerName,
+    $DomainControllerName,    
+
+    # VM Size for the DC
+    [Parameter(Mandatory=$false)]
+    [ValidateSet("Small","Medium","Large","ExtraLarge","A6","A7")]
+    [String]
+    $DCVMSize = "Small",    
+
+    # Name of the member server
+    [Parameter(Mandatory=$true)]
+    [String]
+    $MemberServerName,
+
+    # VM Size for the member server
+    [Parameter(Mandatory=$false)]
+    [ValidateSet("Small","Medium","Large","ExtraLarge","A6","A7")]
+    [String]
+    $MemberVMSize = "Small",    
+
+    # Domain name for the forest
+    [Parameter(Mandatory=$true)]
+    [String]
+    $DomainName,
+
+    # Top level domain for the forest
+    [Parameter(Mandatory=$true)]
+    [String]
+    $TopLevelDomain,
 
     # Name of the VNet to be used
     [Parameter(Mandatory=$true)]
     [String]
     $VNetName,
 
-    # Name of the member server
+     #VNet address prefix for the VNet. For the sake of examples in this scripts, the smallest address space possible for Azure is default
+    [Parameter(Mandatory=$false)]
+    [String]
+    $VNetAddressPrefix = "10.0.0.0/29", 
+
+    # Name of the subnet to be used
     [Parameter(Mandatory=$true)]
     [String]
-    $MemberServerName
+    $SubnetName,
+
+    # Addres space for the Subnet
+    [Parameter(Mandatory=$false)]
+    [String]
+    $SubnetAddressPrefix = "10.0.0.0/29"
 )
 
 # The script has been tested on Powershell 3.0
@@ -131,7 +178,7 @@ function Add-AzureVnetConfigurationFile
 .SYNOPSIS
    Sets the provided values in the VNet file of a subscription's VNet file 
 .DESCRIPTION
-   It sets the VNetSiteName and AffinityGroup of a given subscription's VNEt configuration file.
+   It sets the VNetName and AffinityGroup of a given subscription's VNEt configuration file.
 .EXAMPLE
     Set-VNetFileValues -FilePath c:\temp\servvnet.xml -VNet testvnet -AffinityGroupName affinityGroup1
 .INPUTS
@@ -153,14 +200,14 @@ function Set-VNetFileValues
         # The affinity group the new Vnet site will be associated with
         [String]$AffinityGroupName, 
         
-        # Address prefix for the Vnet. For the sake of examples in this scripts, the smallest address space possible for Azure is default
-        [String]$VNetAddressPrefix = "10.0.0.0/16", 
+        # Address prefix for the Vnet.
+        [String]$VNetAddressPrefix, 
         
         # The name of the subnet to be added to the Vnet
-        [String] $DefaultSubnetName = "Subnet10", 
+        [String] $SubnetName, 
         
         # Addres space for the Subnet
-        [String] $SubnetAddressPrefix = "10.0.10.0/24")
+        [String] $SubnetAddressPrefix)
     
     [Xml]$xml = New-Object XML
     $xml.Load($FilePath)
@@ -202,7 +249,7 @@ function Set-VNetFileValues
             $subnetsElement = $xml.CreateElement("Subnets", "http://schemas.microsoft.com/ServiceHosting/2011/07/NetworkConfiguration")
             $subnetElement = $xml.CreateElement("Subnet", "http://schemas.microsoft.com/ServiceHosting/2011/07/NetworkConfiguration")
             $subnetNameAttribute = $xml.CreateAttribute("name")
-            $subnetNameAttribute.InnerText = $DefaultSubnetName
+            $subnetNameAttribute.InnerText = $SubnetName
             $subnetElement.Attributes.Append($subnetNameAttribute) | Out-Null
             $subnetAddressPrefixElement = $xml.CreateElement("AddressPrefix", "http://schemas.microsoft.com/ServiceHosting/2011/07/NetworkConfiguration")
             $subnetAddressPrefixElement.InnerText = $SubnetAddressPrefix
@@ -229,9 +276,9 @@ function Set-VNetFileValues
    If there is no network configuration, it creates an empty one first using the Add-AzureVnetConfigurationFile helper
    function, then updates the network file with the provided Vnet settings also by adding the subnet.
 .EXAMPLE
-   New-VNetSiteIfNotExists -VNetSiteName testVnet -SubnetName mongoSubnet -AffinityGroupName mongoAffinity
+   New-VNetSite -VNetName testVnet -SubnetName mongoSubnet -AffinityGroupName mongoAffinity
 #>
-function New-VNetSiteIfNotExists
+function New-VNetSite
 {
     [CmdletBinding()]
     param
@@ -240,7 +287,7 @@ function New-VNetSiteIfNotExists
         # Name of the Vnet site
         [Parameter(Mandatory = $true)]
         [String]
-        $VNetSiteName,
+        $VNetName,
         
         # Name of the subnet
         [Parameter(Mandatory = $true)]
@@ -252,38 +299,28 @@ function New-VNetSiteIfNotExists
         [String]
         $AffinityGroupName,
         
-        # Address prefix for the Vnet. For the sake of examples in this scripts, 
-        
-        # the smallest address space possible for Azure is default
-        [String]$VNetAddressPrefix = "10.0.0.0/29", 
-        
-        # The name of the subnet to be added to the Vnet
-        [String] $DefaultSubnetName = "Subnet-1", 
+        # Address prefix for the Vnet. 
+        [String]$VNetAddressPrefix, 
         
         # Addres space for the Subnet
-        [String] $SubnetAddressPrefix = "10.0.0.0/29")
+        [String] $SubnetAddressPrefix)
     
-    # Check the VNet site, and add it to the configuration if it does not exist.
-    $vNet = Get-AzureVNetSite -VNetName $VNetSiteName -ErrorAction SilentlyContinue
-    if ($vNet -eq $null)
+    $vNetFilePath = "$env:temp\$AffinityGroupName" + "vnet.xml"
+    Get-AzureVNetConfig -ExportToFile $vNetFilePath | Out-Null
+    if (!(Test-Path $vNetFilePath))
     {
-        $vNetFilePath = "$env:temp\$AffinityGroupName" + "vnet.xml"
-        Get-AzureVNetConfig -ExportToFile $vNetFilePath | Out-Null
-        if (!(Test-Path $vNetFilePath))
-        {
-            Add-AzureVnetConfigurationFile -Path $vNetFilePath
-        }
-        
-        Set-VNetFileValues -FilePath $vNetFilePath -VNet $vNetSiteName -DefaultSubnetName $SubnetName -AffinityGroup $AffinityGroupName -VNetAddressPrefix $VNetAddressPrefix -SubnetAddressPrefix $SubnetAddressPrefix
-        Set-AzureVNetConfig -ConfigurationPath $vNetFilePath -ErrorAction SilentlyContinue -ErrorVariable errorVariable | Out-Null
-        if (!($?))
-        {
-            throw "Cannot set the vnet configuration for the subscription, please see the file $vNetFilePath. Error detail is: $errorVariable"
-        }
-        Write-Verbose "Modified and saved the VNET Configuration for the subscription"
-        
-        Remove-Item $vNetFilePath
+        Add-AzureVnetConfigurationFile -Path $vNetFilePath
     }
+    
+    Set-VNetFileValues -FilePath $vNetFilePath -VNet $VNetName -SubnetName $SubnetName -AffinityGroup $AffinityGroupName -VNetAddressPrefix $VNetAddressPrefix -SubnetAddressPrefix $SubnetAddressPrefix
+    Set-AzureVNetConfig -ConfigurationPath $vNetFilePath -ErrorAction SilentlyContinue -ErrorVariable errorVariable | Out-Null
+    if (!($?))
+    {
+        throw "Cannot set the vnet configuration for the subscription, please see the file $vNetFilePath. Error detail is: $errorVariable"
+    }
+    Write-Verbose "Modified and saved the VNET Configuration for the subscription"
+    
+    Remove-Item $vNetFilePath
 }
 
 <#
@@ -293,7 +330,7 @@ function New-VNetSiteIfNotExists
    This a small utility that programmatically modifies the vnet configuration file to add a DNS server
    then adds the DNS server's reference to the specified VNet site.
 .EXAMPLE
-    Add-AzureDnsServerConfiguration -Name "contoso" -IpAddress "10.0.0.4" -VnetSiteName "dcvnet"
+    Add-AzureDnsServerConfiguration -Name "contoso" -IpAddress "10.0.0.4" -VNetName "dcvnet"
 .INPUTS
    None
 .OUTPUTS
@@ -311,13 +348,13 @@ function Add-AzureDnsServerConfiguration
         $IpAddress,
 
         [String]
-        $VnetSiteName
+        $VNetName
     )
 
-    $vNet = Get-AzureVNetSite -VNetName $VnetSiteName -ErrorAction SilentlyContinue
+    $vNet = Get-AzureVNetSite -VNetName $VNetName -ErrorAction SilentlyContinue
     if ($vNet -eq $null)
     {
-        throw "VNetSite $VnetSiteName does not exist. Cannot add DNS server reference."
+        throw "VNetSite $VNetName does not exist. Cannot add DNS server reference."
     }
 
     $vnetFilePath = "$env:temp\$AffinityGroupName" + "vnet.xml"
@@ -393,12 +430,12 @@ function Add-AzureDnsServerConfiguration
     $foundVirtualNetworkSite = $null
     if ($vnetSiteNodes.Count -ne 0)
     {
-        $foundVirtualNetworkSite = $vnetSiteNodes | Where-Object { $_.name -eq $VnetSiteName }
+        $foundVirtualNetworkSite = $vnetSiteNodes | Where-Object { $_.name -eq $VNetName }
     }
 
     if ($foundVirtualNetworkSite -eq $null)
     {
-        throw "Cannot find the VNet $VnetSiteName"
+        throw "Cannot find the VNet $VNetName"
     }
 
     $dnsServersRefNode = select-xml -xml $xml -XPath "//network:DnsServersRef" -Namespace $namespace
@@ -439,32 +476,101 @@ function Add-AzureDnsServerConfiguration
 
 <#
 .SYNOPSIS
-   Installs a WinRm certificate to the local store
+  Returns the latest image for a given image family name filter.
 .DESCRIPTION
-   Gets the WinRM certificate from the Virtual Machine in the Service Name specified, and 
-   installs it on the Current User's personal store.
+  Will return the latest image based on a filter match on the ImageFamilyName and
+  PublisedDate of the image.  The more specific the filter, the more control you have
+  over the object returned.
+.EXAMPLE
+  The following example will return the latest SQL Server image.  It could be SQL Server
+  2014, 2012 or 2008
+    
+    Get-LatestImage -ImageFamilyNameFilter "*SQL Server*"
+
+  The following example will return the latest SQL Server 2014 image. This function will
+  also only select the image from images published by Microsoft.  
+   
+    Get-LatestImage -ImageFamilyNameFilter "*SQL Server 2014*" -OnlyMicrosoftImages
+
+  The following example will return $null because Microsoft doesn't publish Ubuntu images.
+   
+    Get-LatestImage -ImageFamilyNameFilter "*Ubuntu*" -OnlyMicrosoftImages
+#>
+function Get-LatestImage
+{
+    param
+    (
+        # A filter for selecting the image family.
+        # For example, "Windows Server 2012*", "*2012 Datacenter*", "*SQL*, "Sharepoint*"
+        [Parameter(Mandatory = $true)]
+        [String]
+        $ImageFamilyNameFilter,
+
+        # A switch to indicate whether or not to select the latest image where the publisher is Microsoft.
+        # If this switch is not specified, then images from all possible publishers are considered.
+        [Parameter(Mandatory = $false)]
+        [switch]
+        $OnlyMicrosoftImages
+    )
+
+    # Get a list of all available images.
+    $imageList = Get-AzureVMImage
+    
+    if ($OnlyMicrosoftImages.IsPresent)
+    {
+        $imageList = $imageList |
+                         Where-Object { `
+                             ($_.PublisherName -ilike "Microsoft*" -and `
+                              $_.ImageFamily -ilike $ImageFamilyNameFilter ) }
+    }
+    else
+    {
+        $imageList = $imageList |
+                         Where-Object { `
+                             ($_.ImageFamily -ilike $ImageFamilyNameFilter ) } 
+    }
+
+    $imageList = $imageList | 
+                     Sort-Object -Unique -Descending -Property ImageFamily |
+                     Sort-Object -Descending -Property PublishedDate
+
+    $imageList | Select-Object -First(1)
+}
+
+<#
+.SYNOPSIS
+   Installs a WinRm certificate to the local store.
+.DESCRIPTION
+   Gets the WinRM certificate from the Virtual Machine deployed to the specified cloud service, and 
+   installs it on the Current User's personal store. The WinRm certificate is stored on the cloud service 
+   that hosts the VM, and can be retrieved with Get-AzureCertificate cmdlet. The certificate is used for
+   authenticating the service. 
 .EXAMPLE
     Install-WinRmCertificate -ServiceName testservice -vmName testVm
 .INPUTS
    None
 .OUTPUTS
-   Microsoft.WindowsAzure.Management.ServiceManagement.Model.OSImageContext
+   None
 #>
 function Install-WinRmCertificate($ServiceName, $VMName)
 {
     $vm = Get-AzureVM -ServiceName $ServiceName -Name $VMName
+    # Find the thumbprint used for the WinRM access
     $winRmCertificateThumbprint = $vm.VM.DefaultWinRMCertificateThumbprint
     
+    # Retrieve the certificate
     $winRmCertificate = Get-AzureCertificate -ServiceName $ServiceName -Thumbprint $winRmCertificateThumbprint -ThumbprintAlgorithm sha1
     
     $installedCert = Get-Item Cert:\CurrentUser\My\$winRmCertificateThumbprint -ErrorAction SilentlyContinue
     
     if ($installedCert -eq $null)
     {
+        # Read in the certificate to a memory buffer to import it to a X509 certificate object.
         $certBytes = [System.Convert]::FromBase64String($winRmCertificate.Data)
         $x509Cert = New-Object System.Security.Cryptography.X509Certificates.X509Certificate
         $x509Cert.Import($certBytes)
         
+        # Add the X509 certificate to the store.
         $store = New-Object System.Security.Cryptography.X509Certificates.X509Store "Root", "LocalMachine"
         $store.Open("ReadWrite")
         $store.Add($x509Cert)
@@ -496,21 +602,29 @@ if ($existingVm -ne $null)
 $affinityGroupName = $($VNetName + "aff").ToLower()
 New-AzureAffinityGroupIfNotExists -AffinityGroupName $affinityGroupName -Location $Location
 
-$subnetName = $($VNetName + "adsubnet").ToLower()
-New-VnetSiteIfNotExists -VNetSiteName $VNetName -SubnetName $subnetName -AffinityGroupName $affinityGroupName
+# Check the VNet site, and add it to the configuration if it does not exist.
+$vNet = Get-AzureVNetSite -VNetName $VNetName -ErrorAction SilentlyContinue
+if ($vNet -ne $null)
+{
+    throw "VNet site name $VNetName is taken. Please provide a different name."
+}
 
-# The existing stock Windows Server image names can be retrieved with the following:
-# Get-AzureVMImage | 
-#        Where-Object {($_.Label -ilike "*Windows Server*") -and ($_.PublisherName -ilike "*Microsoft Windows Server Group*")} | 
-#        Sort-Object PublishedDate -Descending | Select-Object PublishedDate, Label, ImageName | Format-Table -AutoSize
+New-VNetSite -VNetName $VNetName -VNetAddressPrefix $VNetAddressPrefix -SubnetName $subnetName -SubnetAddressPrefix $SubnetAddressPrefix -AffinityGroupName $affinityGroupName
 
-$imageName = "a699494373c04fc0bc8f2bb1389d6106__Windows-Server-2012-Datacenter-201307.01-en.us-127GB.vhd"
-$instanceSize = "Small"
-$credential = Get-Credential
+$imageFamilyNameFilter = "Windows Server 2012 Datacenter"
+
+$image = Get-LatestImage -ImageFamilyNameFilter $imageFamilyNameFilter -OnlyMicrosoftImages
+if ($image -eq $null)
+{
+    throw "Unable to find an image for $imageFamilyNameFilter to provision Virtual Machine."
+}
+
+Write-Verbose "Prompt user for administrator credentials to use when provisioning the virtual machine(s)."
+$credential = Get-Credential -Message "Please provide the administrator credentials for the virtual machines"
 
 $domainDns = New-AzureDNS -Name $DomainControllerName -IPAddress '127.0.0.1'
 
-$domainControllerVm = New-AzureVMConfig -Name $DomainControllerName -InstanceSize $instanceSize -ImageName $imageName | 
+$domainControllerVm = New-AzureVMConfig -Name $DomainControllerName -InstanceSize $DCVMSize -ImageName $image.ImageName | 
                         Add-AzureProvisioningConfig -Windows -AdminUsername $credential.GetNetworkCredential().username `
                         -Password $credential.GetNetworkCredential().password | 
                         Set-AzureSubnet -SubnetNames $subnetName |
@@ -521,8 +635,7 @@ $domainControllerWinRMUri= Get-AzureWinRMUri -ServiceName $ServiceName -Name $Do
 
 Install-WinRmCertificate $ServiceName $DomainControllerName
 
-$DomainName = "contoso"
-$DomainFqdn = $DomainName + ".com"
+$DomainFqdn = $DomainName + "." + $TopLevelDomain
 
 $domainInstallScript = {
         param ([String] $DomainFqdn, [string] $DomainName, [System.Security.SecureString] $safeModePassword)
@@ -556,14 +669,14 @@ do
 }
 until ($vm.InstanceStatus -eq "ReadyRole")
 
-Add-AzureDnsServerConfiguration -Name $DomainName -IpAddress $vm.IpAddress -VnetSiteName $VNetName
+Add-AzureDnsServerConfiguration -Name $DomainName -IpAddress $vm.IpAddress -VNetName $VNetName
 
 if ($vm -eq $null)
 {
     throw "Cannot get the details of the DC VM"
 }
 
-$memberServerVm = New-AzureVMConfig -Name $MemberServerName -InstanceSize Small -ImageName $imageName | 
+$memberServerVm = New-AzureVMConfig -Name $MemberServerName -InstanceSize $MemberVMSize -ImageName $image.ImageName | 
                     Add-AzureProvisioningConfig -WindowsDomain  -JoinDomain $DomainFqdn `
                         -AdminUsername $credential.GetNetworkCredential().username -Password $credential.GetNetworkCredential().password `
                         -Domain $DomainName -DomainUserName $credential.GetNetworkCredential().username -DomainPassword $credential.GetNetworkCredential().password   |
