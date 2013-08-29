@@ -578,6 +578,17 @@ function Install-WinRmCertificate($ServiceName, $VMName)
     }
 }
 
+# Check if the current subscription's storage account's location is the same as the Location parameter
+$subscription = Get-AzureSubscription -Current
+$currentStorageAccountLocation = (Get-AzureStorageAccount -StorageAccountName $subscription.CurrentStorageAccount).Location
+
+if ($Location -ne $currentStorageAccountLocation)
+{
+    throw "Selected location parameter value, ""$Location"" is not the same as the active (current) subscription's current storage account location `
+        ($currentStorageAccountLocation). Either change the location parameter value, or select a different storage account for the `
+        subscription."
+}
+
 # Test if the service name has already been taken
 $existingService = Get-AzureService -ServiceName $ServiceName -ErrorAction SilentlyContinue
 if ($existingService -ne $null)
