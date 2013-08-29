@@ -580,7 +580,7 @@ function Install-WinRmCertificate($ServiceName, $VMName)
 
 # Check if the current subscription's storage account's location is the same as the Location parameter
 $subscription = Get-AzureSubscription -Current
-$currentStorageAccountLocation = (Get-AzureStorageAccount -StorageAccountName $subscription.CurrentStorageAccount).Location
+$currentStorageAccountLocation = (Get-AzureStorageAccount -StorageAccountName $subscription.CurrentStorageAccount).GeoPrimaryLocation
 
 if ($Location -ne $currentStorageAccountLocation)
 {
@@ -640,7 +640,7 @@ $domainControllerVm = New-AzureVMConfig -Name $DomainControllerName -InstanceSiz
                         -Password $credential.GetNetworkCredential().password | 
                         Set-AzureSubnet -SubnetNames $subnetName |
                         Add-AzureDataDisk -CreateNew -DiskSizeInGB 20 -DiskLabel 'DITDrive' -LUN 0 |
-                        New-AzureVM -ServiceName $ServiceName -AffinityGroup $affinityGroupName -VNetName $VNetName -WaitForBoot
+                        New-AzureVM -ServiceName $ServiceName -AffinityGroup $affinityGroupName -VNetName $VNetName -DnsSettings $domainDns -WaitForBoot
 
 $domainControllerWinRMUri= Get-AzureWinRMUri -ServiceName $ServiceName -Name $DomainControllerName
 
