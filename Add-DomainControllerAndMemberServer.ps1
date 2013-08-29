@@ -2,20 +2,20 @@
 .Synopsis
    Add a domain cotroller and a member server to a cloud service.
 .DESCRIPTION
-   This script demonstrates how to add a VM and script it to become a domain controller for a forest, and add a member 
+   This script demonstrates how to add a VM and script it to become a domain controller for a new forest, and add a member 
    server to the domain, by adding them on the same VNet. A new VNet is created for the deployment, if a VNet site 
    with the same name exists, the script does not continue.
 .EXAMPLE
-    Using the default values for the parameters
+    Using all of the required parameters
 
    .\Add-DomainControllerAndMemberServer.ps1 -ServiceName AService -Location "West US" -DomainControllerName dc `
-        -MemberServerName mem -DomainName "contoso" -TopLevelDomain "com" -VNetName dcvnet -SubnetName "subnet-1"
+        -MemberServerName mem -DomainName "contoso" -TopLevelDomain "com" -VNetName "dcvnet"
 
-    Providing the full details of the VNet and VM sizes
+    Using all of the paramaters including the optional VNet details and VM sizes
 
     .\Add-DomainControllerAndMemberServer.ps1 -ServiceName AService -Location "West US" -DomainControllerName dc -DCVMSize "Medium" `
         -MemberServerName mem -MemberVMSize "Medium" -DomainName "contoso" -TopLevelDomain "com" -VNetName dcvnet " `
-        -VNetAddressPrefix "10.0.0.0/4" -SubnetName "subnet-1" -SubnetAddressPrefix "10.0.0.0/4"
+        -VNetAddressPrefix "10.0.0.0/16" -SubnetName "Subnet-10" -SubnetAddressPrefix "10.0.10.0/24"
 
 .INPUTS
    None
@@ -41,7 +41,7 @@ Param
 
     # VM Size for the DC
     [Parameter(Mandatory=$false)]
-    [ValidateSet("Small","Medium","Large","ExtraLarge","A6","A7")]
+    [ValidateSet("ExtraSmall","Small","Medium","Large","ExtraLarge","A6","A7")]
     [String]
     $DCVMSize = "Small",    
 
@@ -52,7 +52,7 @@ Param
 
     # VM Size for the member server
     [Parameter(Mandatory=$false)]
-    [ValidateSet("Small","Medium","Large","ExtraLarge","A6","A7")]
+    [ValidateSet("ExtraSmall","Small","Medium","Large","ExtraLarge","A6","A7")]
     [String]
     $MemberVMSize = "Small",    
 
@@ -74,17 +74,17 @@ Param
      #VNet address prefix for the VNet. For the sake of examples in this scripts, the smallest address space possible for Azure is default
     [Parameter(Mandatory=$false)]
     [String]
-    $VNetAddressPrefix = "10.0.0.0/29", 
+    $VNetAddressPrefix = "10.0.0.0/16", 
 
     # Name of the subnet to be used
-    [Parameter(Mandatory=$true)]
+    [Parameter(Mandatory=$false)]
     [String]
-    $SubnetName,
+    $SubnetName = "Subnet-10",
 
     # Addres space for the Subnet
     [Parameter(Mandatory=$false)]
     [String]
-    $SubnetAddressPrefix = "10.0.0.0/29"
+    $SubnetAddressPrefix = "10.0.10.0/24"
 )
 
 # The script has been tested on Powershell 3.0
