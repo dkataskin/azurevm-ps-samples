@@ -101,7 +101,7 @@ if($existingBackups -ne $null)
         $objBackup | Add-Member -type NoteProperty -name BackupDate -value $($backupParts[0] + "-" + $backupParts[1] + "-" + $backupParts[2])
         $objBackup | Add-Member -type NoteProperty -name BackupNumber -value $backupParts[3]
         $objBackup | Add-Member -type NoteProperty -name BlobName -value $existingBackup.Name
-        $objBackup | Add-Member -type NoteProperty -name BackupId -value ([int]$($backupParts[0] + $backupParts[1] + $backupParts[2] + $backupParts[3]))
+        $objBackup | Add-Member -type NoteProperty -name BackupId -value ([Int64]$($backupParts[0] + $backupParts[1] + $backupParts[2] + $backupParts[3]))
 
         $foundBackups += $objBackup
     }
@@ -139,7 +139,7 @@ if ($PSCmdlet.ParameterSetName -eq "KeepLast")
 else
 {
     # Remove the backups older than N days
-    $lastDayToKeep = ([int](Get-Date $((Get-Date).AddDays(-1 * ($OlderThanDays - 1))) -Format "yyyyMMdd")) * 10000
+    $lastDayToKeep = ([Int64](Get-Date $((Get-Date).AddDays(-1 * ($OlderThanDays - 1))) -Format "yyyyMMdd")) * 10000
     $foundBackups = $foundBackups | Where-Object {$_.BackupId -lt $lastDayToKeep}
 
     foreach ($foundBackup in $foundBackups)

@@ -26,17 +26,19 @@
         $FindInStorage, 
         
         # Service the VM is running on
-        [Parameter(Mandatory=$true)]
+        [Parameter(Mandatory=$true, ParameterSetName="UseVMsStorage")]
+        [Parameter(ParameterSetName="FindInStorage")]
         [String]
         $ServiceName, 
 
         # Name of the VM
-        [Parameter(Mandatory=$true)]
+        [Parameter(Mandatory=$true, ParameterSetName="UseVMsStorage")]
+        [Parameter(ParameterSetName="FindInStorage")]
         [String]
         $Name,
 
         # Name of the storage account for the backup blobs
-        [Parameter(Mandatory=$true, ParameterSetName="FindInStorage")]
+        [Parameter(Mandatory=$true, ParameterSetName="FindInStorage")]        
         [String]
         $StorageAccountName,
 
