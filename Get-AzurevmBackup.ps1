@@ -93,10 +93,11 @@
         }
     }
         
-    $BackupVmPrevix = "_v_"
     $backupNamePrefix = "_b_"
 
-    $existingBackups = Get-AzureStorageBlob -Container $StorageAccountContainer | Where-Object {$_.Name -ilike $("*" + $BackupVmPrevix + $ServiceName + "-" + $Name + $backupNamePrefix +"*")} | Select-Object Name
+    $existingBackups = Get-AzureStorageBlob -Container $StorageAccountContainer | 
+        Where-Object {$_.Name -match $(".*" + $ServiceName + "-" + $Name + $backupNamePrefix +"[0-9]{4}-[0-9]{2}-[0-9]{2}-[0-9]{4}\.vhd$")} | 
+        Select-Object Name
 
     $foundBackups = @()
 
@@ -104,16 +105,7 @@
     {
         foreach ($existingBackup in $existingBackups)
         {
-            # parse the name
-            $parts = $existingBackup.Name -Split $BackupVmPrevix
-            if ($parts.Count -ne 2)
-            {
-                throw "Unexpected backup format for blob name $existingBackup"
-            }
-
-            $baseName = $parts[0]
-
-            $parts = $parts[1] -split $backupNamePrefix
+            $parts = $existingBackup.Name -split $backupNamePrefix
             if ($parts.Count -ne 2)
             {
                 throw "Unexpected backup format for blob name $existingBackup"
@@ -142,6 +134,7 @@
             $objBackup | Add-Member -type NoteProperty -name BackupDate -value $($backupParts[1] + "/" + $backupParts[2] + "/" + $backupParts[0])
             $objBackup | Add-Member -type NoteProperty -name BackupNumber -value $backupParts[3]
             $objBackup | Add-Member -type NoteProperty -name BlobName -value $existingBackup.Name
+            $objBackup | Add-Member -type NoteProperty -name BackupId -value ([Int64]$($backupParts[0] + $backupParts[1] + $backupParts[2] + $backupParts[3]))
 
             $foundBackups += $objBackup
         }

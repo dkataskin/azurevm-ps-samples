@@ -80,36 +80,20 @@ if ($storageAccountName -ne $currentStorageAccountName)
     Set-AzureSubscription -SubscriptionName $currentAzureSubscription.SubscriptionName -CurrentStorageAccount $storageAccountName
 }
 
-$baseName = ""
-if ($diskBlobName.EndsWith(".vhd"))
-{
-    # Remove the trailing .vhd
-    $baseName = $diskBlobName.Substring(0, ($diskBlobName.Length - 4))
-}
-else
-{
-    $baseName = $diskBlobName
-}
+$backupNamePrefix = $ServiceName + "-" + $Name + "_b_" + (Get-Date -Format "yyyy-MM-dd") + "-"
 
-if ($baseName -eq "")
-{
-    throw "Could not extract the base disk name."
-}
+$backNameRegex = $backupNamePrefix + "[0-9]{4}\.vhd$"
 
-$backupNamePrefix = "_v_" + $ServiceName + "-" + $Name + "_b_" + (Get-Date -Format "yyyy-MM-dd") + "-"
-
-$existingBackups = Get-AzureStorageBlob -Container $containerName | Where-Object {$_.Name -ilike "$($baseName + $backupNamePrefix)*"} | Select-Object Name
+$existingBackups = Get-AzureStorageBlob -Container $containerName | Where-Object {$_.Name -match "$backNameRegex"} | Select-Object Name
 
 $backupNumber = 0
 if($existingBackups -ne $null)
 {
-    $baseAndBackupNameLength = $($baseName + $backupNamePrefix).Length
-    $latestBackup = $existingBackups | ForEach-Object {[int]$_.Name.Substring($($baseName + $backupNamePrefix).Length, ($_.Name.Length - $baseAndBackupNameLength - 4))} | Measure-Object -Maximum
+    $latestBackup = $existingBackups | ForEach-Object {[int]$_.Name.Substring($backupNamePrefix.Length, ($_.Name.Length - $backupNamePrefix.Length - 4))} | Measure-Object -Maximum
     $backupNumber = $latestBackup.Maximum + 1 
 }
 
-$backupName = $baseName + $backupNamePrefix + "{0:0000}" -f $backupNumber + ".vhd"
-
+$backupName = $backupNamePrefix + "{0:0000}" -f $backupNumber + ".vhd"
 
 $copiedBlob = Start-AzureStorageBlobCopy -SrcContainer $containerName -SrcBlob $diskBlobName -DestContainer $containerName -DestBlob $backupName
 

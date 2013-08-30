@@ -52,10 +52,11 @@ if ((Get-Module -ListAvailable Azure) -eq $null)
     throw "Windows Azure Powershell not found! Please install from http://www.windowsazure.com/en-us/downloads/#cmd-line-tools"
 }
 
-$BackupVmPrefix = "_v_"
 $backupNamePrefix = "_b_"
 
-$existingBackups = Get-AzureStorageBlob -Container $ContainerName | Where-Object {$_.Name -ilike $("*" + $BackupVmPrefix + $ServiceName + "-" + $Name + $backupNamePrefix +"*")} | Select-Object Name
+$existingBackups = Get-AzureStorageBlob -Container $ContainerName | 
+    Where-Object {$_.Name -match $(".*" + $ServiceName + "-" + $Name + $backupNamePrefix +"[0-9]{4}-[0-9]{2}-[0-9]{2}-[0-9]{4}\.vhd$")} | 
+    Select-Object Name
 
 $foundBackups = @()
 
@@ -63,16 +64,7 @@ if($existingBackups -ne $null)
 {
     foreach ($existingBackup in $existingBackups)
     {
-        # parse the name
-        $parts = $existingBackup.Name -Split $BackupVmPrefix
-        if ($parts.Count -ne 2)
-        {
-            throw "Unexpected backup format for blob name $existingBackup"
-        }
-
-        $baseName = $parts[0]
-
-        $parts = $parts[1] -split $backupNamePrefix
+        $parts = $existingBackup.Name -split $backupNamePrefix
         if ($parts.Count -ne 2)
         {
             throw "Unexpected backup format for blob name $existingBackup"
@@ -107,18 +99,7 @@ if($existingBackups -ne $null)
     }
 }
 
-$existingVmOsDisks = @()
-
-$vms = Get-AzureVM 
-
-foreach ($vm in $vms)
-{
-    $vmDetails = Get-AzureVM -ServiceName $vm.ServiceName -Name $vm.Name
-   if (([System.Uri]$vmDetails.VM.OSVirtualHardDisk.MediaLink).Segments.Count -eq 3) 
-   {
-        $existingVmOsDisks += ([System.Uri]$vmDetails.VM.OSVirtualHardDisk.MediaLink).Segments[2]
-   } 
-}
+$existingVmDisks = Get-AzureDisk
 
 if ($PSCmdlet.ParameterSetName -eq "KeepLast")
 {
@@ -129,7 +110,15 @@ if ($PSCmdlet.ParameterSetName -eq "KeepLast")
     {
         if ($index++ -gt $KeepLast)
         {
-            if (-not($existingVmOsDisks -contains $foundBackup.BlobName))
+            $existingDisk = $existingVmDisks | Where-Object {$_.MediaLink -match $(".*" + $foundBackup.BlobName + "$")}
+
+            if ($existingDisk -ne $null -and $existingDisk.AttachedTo -eq $null)
+            {
+                Remove-AzureDisk -DiskName $existingDisk.DiskName 
+                $existingDisk = $null
+            }
+
+            if ($existingDisk -eq $null)
             {
                 Remove-AzureStorageBlob -Container $containerName -Blob $foundBackup.BlobName
             }
