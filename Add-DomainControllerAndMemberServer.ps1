@@ -337,9 +337,10 @@ function New-VNetSite
    None
 #>
 
+
 function Add-AzureDnsServerConfiguration
 {
-    param
+   param
     (
         [String]
         $Name,
@@ -425,37 +426,32 @@ function Add-AzureDnsServerConfiguration
     }
 
     # Now set the DnsReference for the network site
-    $vnetSiteNodes = $xml.GetElementsByTagName("VirtualNetworkSite")
-    
-    $foundVirtualNetworkSite = $null
-    if ($vnetSiteNodes.Count -ne 0)
-    {
-        $foundVirtualNetworkSite = $vnetSiteNodes | Where-Object { $_.name -eq $VNetName }
-    }
+    $xpathQuery = "//network:VirtualNetworkSite[@name = '" + $VNetName + "']"
+    $foundVirtualNetworkSite = select-xml -xml $xml -XPath $xpathQuery -Namespace $namespace 
 
     if ($foundVirtualNetworkSite -eq $null)
     {
         throw "Cannot find the VNet $VNetName"
     }
 
-    $dnsServersRefNode = select-xml -xml $xml -XPath "//network:DnsServersRef" -Namespace $namespace
+    $dnsServersRefElementNode = $foundVirtualNetworkSite.Node.GetElementsByTagName("DnsServersRef")
 
     $dnsServersRefElement = $null
-    if ($dnsServersRefNode -eq $null)
+    if ($dnsServersRefElementNode.Count -eq 0)
     {
         $dnsServersRefElement = $xml.CreateElement("DnsServersRef", "http://schemas.microsoft.com/ServiceHosting/2011/07/NetworkConfiguration")
-        $foundVirtualNetworkSite.AppendChild($dnsServersRefElement) | Out-Null
+        $foundVirtualNetworkSite.Node.AppendChild($dnsServersRefElement) | Out-Null
     }
     else
     {
-        $dnsServersRefElement = $dnsServersRefNode.Node
+        $dnsServersRefElement = $foundVirtualNetworkSite.DnsServersRef
     }
     
-    $dnsServerRefElements = $dnsServersRefElement.GetElementsByTagName("DnsServerRef")
-    $dnsServerRef = $dnsServerRefElements | Where-Object {$_.name -eq $Name}
+    $xpathQuery = "/DnsServerRef[@name = '" + $Name + "']"
+    $dnsServerRef = $dnsServersRefElement.SelectNodes($xpathQuery)
     $dnsServerRefElement = $null
 
-    if($dnsServerRef -eq $null)
+    if($dnsServerRef.Count -eq 0)
     {
         $dnsServerRefElement = $xml.CreateElement("DnsServerRef", "http://schemas.microsoft.com/ServiceHosting/2011/07/NetworkConfiguration")        
         $dnsServerRefNameAttribute = $xml.CreateAttribute("name")
