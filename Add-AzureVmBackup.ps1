@@ -96,9 +96,9 @@ if ($baseName -eq "")
     throw "Could not extract the base disk name."
 }
 
-$existingBackups = Get-AzureStorageBlob -Container $containerName | Where-Object {$_.Name -ilike "$($baseName)_v_*"} | Select-Object Name
-
 $backupNamePrefix = "_v_" + $ServiceName + "-" + $Name + "_b_" + (Get-Date -Format "yyyy-MM-dd") + "-"
+
+$existingBackups = Get-AzureStorageBlob -Container $containerName | Where-Object {$_.Name -ilike "$($baseName + $backupNamePrefix)*"} | Select-Object Name
 
 $backupNumber = 0
 if($existingBackups -ne $null)
@@ -108,7 +108,7 @@ if($existingBackups -ne $null)
     $backupNumber = $latestBackup.Maximum + 1 
 }
 
-$backupName = $baseName + $backupNamePrefix + $backupNumber + ".vhd"
+$backupName = $baseName + $backupNamePrefix + "{0:0000}" -f $backupNumber + ".vhd"
 
 
 $copiedBlob = Start-AzureStorageBlobCopy -SrcContainer $containerName -SrcBlob $diskBlobName -DestContainer $containerName -DestBlob $backupName

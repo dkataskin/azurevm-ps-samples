@@ -29,11 +29,15 @@ Param
     [String]
     $ContainerName = "vhds",
 
+    # Last N backups to keep
+    [Parameter(Mandatory=$true, ParameterSetName='KeepLast')]
+    [String]
+    $KeepLast,
 
     # Last N backups to keep
-    [Parameter(Mandatory=$true)]
+    [Parameter(Mandatory=$true, ParameterSetName='OlderThanDays')]
     [String]
-    $Keep
+    $OlderThanDays
 )
 
 # The script has been tested on Powershell 3.0
@@ -48,10 +52,10 @@ if ((Get-Module -ListAvailable Azure) -eq $null)
     throw "Windows Azure Powershell not found! Please install from http://www.windowsazure.com/en-us/downloads/#cmd-line-tools"
 }
 
-$BackupVmPrevix = "_v_"
+$BackupVmPrefix = "_v_"
 $backupNamePrefix = "_b_"
 
-$existingBackups = Get-AzureStorageBlob -Container $ContainerName | Where-Object {$_.Name -ilike $("*" + $BackupVmPrevix + $ServiceName + "-" + $Name + $backupNamePrefix +"*")} | Select-Object Name
+$existingBackups = Get-AzureStorageBlob -Container $ContainerName | Where-Object {$_.Name -ilike $("*" + $BackupVmPrefix + $ServiceName + "-" + $Name + $backupNamePrefix +"*")} | Select-Object Name
 
 $foundBackups = @()
 
@@ -60,7 +64,7 @@ if($existingBackups -ne $null)
     foreach ($existingBackup in $existingBackups)
     {
         # parse the name
-        $parts = $existingBackup.Name -Split $BackupVmPrevix
+        $parts = $existingBackup.Name -Split $BackupVmPrefix
         if ($parts.Count -ne 2)
         {
             throw "Unexpected backup format for blob name $existingBackup"
@@ -116,16 +120,33 @@ foreach ($vm in $vms)
    } 
 }
 
-$index = 1
-$foundBackups = $foundBackups | Sort-Object -Property BackupId -Descending
-
-foreach ($foundBackup in $foundBackups)
+if ($PSCmdlet.ParameterSetName -eq "KeepLast")
 {
-    if ($index++ -gt $Keep)
+    $index = 1
+    $foundBackups = $foundBackups | Sort-Object -Property BackupId -Descending
+
+    foreach ($foundBackup in $foundBackups)
+    {
+        if ($index++ -gt $KeepLast)
+        {
+            if (-not($existingVmOsDisks -contains $foundBackup.BlobName))
+            {
+                Remove-AzureStorageBlob -Container $containerName -Blob $foundBackup.BlobName
+            }
+        }    
+    }
+}
+else
+{
+    # Remove the backups older than N days
+    $lastDayToKeep = ([int](Get-Date $((Get-Date).AddDays(-1 * ($OlderThanDays - 1))) -Format "yyyyMMdd")) * 10000
+    $foundBackups = $foundBackups | Where-Object {$_.BackupId -lt $lastDayToKeep}
+
+    foreach ($foundBackup in $foundBackups)
     {
         if (-not($existingVmOsDisks -contains $foundBackup.BlobName))
         {
             Remove-AzureStorageBlob -Container $containerName -Blob $foundBackup.BlobName
         }
-    }    
+    }
 }
