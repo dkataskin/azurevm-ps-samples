@@ -11,10 +11,10 @@
    .\Add-DomainControllerAndMemberServer.ps1 -ServiceName AService -Location "West US" -DomainControllerName dc `
         -MemberServerName mem -DomainName "contoso" -TopLevelDomain "com" -VNetName "dcvnet"
 
-    Using all of the paramaters including the optional VNet details and VM sizes
+    Using all of the parameters including the optional VNet details and VM sizes
 
     .\Add-DomainControllerAndMemberServer.ps1 -ServiceName AService -Location "West US" -DomainControllerName dc -DCVMSize "Medium" `
-        -MemberServerName mem -MemberVMSize "Medium" -DomainName "contoso" -TopLevelDomain "com" -VNetName dcvnet " `
+        -MemberServerName mem -MemberVMSize "Medium" -DomainName "contoso" -TopLevelDomain "com" -VNetName "dcvnet" `
         -VNetAddressPrefix "10.0.0.0/16" -SubnetName "Subnet-10" -SubnetAddressPrefix "10.0.10.0/24"
 
 .INPUTS
