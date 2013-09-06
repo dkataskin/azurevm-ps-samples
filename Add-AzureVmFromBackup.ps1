@@ -8,7 +8,12 @@
    Service is created if not existis, VM already exists throws an exception.
 .EXAMPLE
     Restoring from the day and the backup number of the day
-   .\Add-AzureVmFromBackup -ServiceName aService -Location "West US" -Name aVm -Size "Small" -Day "2013-08-28" -BackupNumber 1
+   .\Add-AzureVmFromBackup -BackupServiceName existingBackupService -BackupVmName existingVmNameOnService -StorageAccountName backupLocation`
+        -ServiceName aService -Location "West US" -Name aVm -Size "Small" -Day "2013-08-28" -BackupNumber 1
+
+    Restoring from a BackupId retrived by Get-AzureVmBackup.ps1 script
+    .\Add-AzureVmFromBackup -BackupServiceName existingBackupService -BackupVmName existingVmNameOnService -StorageAccountName backupLocation`
+    -ServiceName aService -Location "West US" -Name aVm -Size "Small" -BackupId 201309050001
 #>
 Param
 (
@@ -126,20 +131,56 @@ else
     $backupNumberString = $backupIdString.Substring(8, 4)
 }
     
-$backupNamePrefix = "_b_"
+$backupNameDelimeter = "_b_"
+$diskDelimeter = "_d_"
 
-$vhdBlobName = Get-AzureStorageBlob -Container $ContainerName | Where-Object {$_.Name -ilike $("*" + $BackupServiceName + "-" + $BackupVmName + $backupNamePrefix + $dayString + "-" + $backupNumberString + ".vhd")} 
+$vhdBlobs = Get-AzureStorageBlob -Container $ContainerName | `
+    Where-Object {$_.Name -match $(".*" + $BackupServiceName + "-" + $BackupVmName + $backupNameDelimeter + "[0-9][0-9]" + `
+                                    $diskDelimeter + $dayString + "-" + $backupNumberString + ".vhd")} 
 
-if ($vhdBlobName -eq $null)
+if ($vhdBlobs -eq $null)
 {
     throw "No blob for that backup speficication is found."
 }
 
-$diskName = $ServiceName + "-" + $Name + $backupNamePrefix + $dayString + "-" + $backupNumberString
-$azureDisk = Add-AzureDisk -DiskName $diskName -MediaLocation $vhdBlobName.ICloudBLob.Uri.AbsoluteUri -OS "Windows"
+# the disk with ID 00 is allways the OS disk
+$osDiskName = $ServiceName + "-" + $Name + $backupNameDelimeter + "00" + $diskDelimeter + $dayString + "-" + $backupNumberString
+$osVhdBlob = $vhdBlobs | Where-Object {$_.Name -match $(".*" + $BackupServiceName + "-" + $BackupVmName + $backupNameDelimeter + `
+                                        "00" + $diskDelimeter + $dayString + "-" + $backupNumberString + ".vhd")} 
+if ($osVhdBlob -eq $null)
+{
+    throw "No OS disk blob for that backup speficication is found."
+}
 
-$vm = New-AzureVMConfig -Name $Name -InstanceSize $Size -DiskName $diskName | 
-                        New-AzureVM -ServiceName $ServiceName
+$azureOsDisk = Add-AzureDisk -DiskName $osDiskName -MediaLocation $osVhdBlob.ICloudBLob.Uri.AbsoluteUri -OS "Windows"
+
+$dataDiskBlobs = $vhdBlobs | Where-Object {$_.Name -notmatch $(".*" + $BackupServiceName + "-" + $BackupVmName + $backupNameDelimeter + `
+                                        "00" + $diskDelimeter + $dayString + "-" + $backupNumberString + ".vhd")} 
+
+$vmConfig = New-AzureVMConfig -Name $Name -InstanceSize $Size -DiskName $osDiskName 
+foreach ($dataDiskBlob in $dataDiskBlobs)
+{
+    $diskMediaLinkUri = [System.Uri]$dataDiskBlob.ICloudBLob.Uri.AbsoluteUri
+    $diskBlobName = $diskMediaLinkUri.Segments[2]
+    $backupNameParts = $diskBlobName -split $backupNameDelimeter
+    if ($backupNameParts.Length -ne 2)
+    {
+        throw "Unrecognized naming convention, $diskBlobName"
+    }
+
+    $backupNameParts = $backupNameParts[1] -split $diskDelimeter
+    if ($backupNameParts.Length -ne 2)
+    {
+        throw "Unrecognized naming convention, $diskBlobName. Cannot find disk number."
+    }
+
+    $diskNumberString = $backupNameParts[0]
+    $diskLabel = $ServiceName + "-" + $Name + $backupNameDelimeter + $diskNumberString  + $diskDelimeter + $dayString + "-" + $backupNumberString
+    $diskNumber = [int]$diskNumberString
+    $vmConfig = $vmConfig | Add-AzureDataDisk -ImportFrom -DiskLabel $diskLabel -LUN $diskNumber -MediaLocation $diskMediaLinkUri.AbsoluteUri 
+}
+ 
+$vmConfig | New-AzureVM -ServiceName $ServiceName
 
 # Restore the storage account
 Set-AzureSubscription -SubscriptionName $currentAzureSubscription.SubscriptionName -CurrentStorageAccount $currentStorageAccountName

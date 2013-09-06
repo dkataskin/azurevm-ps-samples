@@ -53,12 +53,13 @@ if ((Get-Module -ListAvailable Azure) -eq $null)
 }
 
 $backupNamePrefix = "_b_"
+$diskDelimeter = "_d_"
 
 $existingBackups = Get-AzureStorageBlob -Container $ContainerName | 
-    Where-Object {$_.Name -match $(".*" + $ServiceName + "-" + $Name + $backupNamePrefix +"[0-9]{4}-[0-9]{2}-[0-9]{2}-[0-9]{4}\.vhd$")} | 
+    Where-Object {$_.Name -match $(".*" + $ServiceName + "-" + $Name + $backupNamePrefix + "[0-9][0-9]" + $diskDelimeter + "[0-9]{4}-[0-9]{2}-[0-9]{2}-[0-9]{4}\.vhd$")} | 
     Select-Object Name
 
-$foundBackups = @()
+$foundBackups = @{}
 
 if($existingBackups -ne $null)
 {
@@ -81,7 +82,14 @@ if($existingBackups -ne $null)
             $backupPart = $parts[1]
         }
             
-        $backupParts = $backupPart -split "-"
+        $backupParts = $backupPart -split $diskDelimeter
+        if ($backupParts.Count -ne 2)
+        {
+            throw "The backup name does not conform to the naming convention."
+        }
+        $diskNumber = $backupParts[0]
+            
+        $backupParts = $backupParts[1] -split "-"
         if ($vmParts.Count -ne 2 -and $backupParts.Count -ne 4)
         {
             throw "The backup name does not conform to the naming convention."
@@ -95,7 +103,12 @@ if($existingBackups -ne $null)
         $objBackup | Add-Member -type NoteProperty -name BlobName -value $existingBackup.Name
         $objBackup | Add-Member -type NoteProperty -name BackupId -value ([Int64]$($backupParts[0] + $backupParts[1] + $backupParts[2] + $backupParts[3]))
 
-        $foundBackups += $objBackup
+        if (!$foundBackups.ContainsKey($objBackup.BackupId))
+        {
+            # Initialize the disk array for the found backup
+            $foundBackups.Add($objBackup.BackupId, @())
+        }
+        $foundBackups[$objBackup.BackupId] += $objBackup
     }
 }
 
@@ -104,13 +117,44 @@ $existingVmDisks = Get-AzureDisk
 if ($PSCmdlet.ParameterSetName -eq "KeepLast")
 {
     $index = 1
-    $foundBackups = $foundBackups | Sort-Object -Property BackupId -Descending
+    $foundBackupIds = $foundBackups.Keys | Sort-Object -Descending
 
-    foreach ($foundBackup in $foundBackups)
+    foreach ($foundBackupId in $foundBackupIds)
     {
         if ($index++ -gt $KeepLast)
         {
-            $existingDisk = $existingVmDisks | Where-Object {$_.MediaLink -match $(".*" + $foundBackup.BlobName + "$")}
+            $backupVhds = $foundBackups[$foundBackupId]
+
+            foreach ($backupVhd in $backupVhds)
+            {
+                $existingDisk = $existingVmDisks | Where-Object {$_.MediaLink -match $(".*" + $backupVhd.BlobName + "$")}
+
+                if ($existingDisk -ne $null -and $existingDisk.AttachedTo -eq $null)
+                {
+                    Remove-AzureDisk -DiskName $existingDisk.DiskName 
+                    $existingDisk = $null
+                }
+
+                if ($existingDisk -eq $null)
+                {
+                    Remove-AzureStorageBlob -Container $containerName -Blob $backupVhd.BlobName
+                }   
+            }            
+        }    
+    }
+}
+else
+{
+    # Remove the backups older than N days
+    $lastDayToKeep = ([Int64](Get-Date $((Get-Date).AddDays(-1 * ($OlderThanDays - 1))) -Format "yyyyMMdd")) * 10000
+    $foundBackupIds = $foundBackups.Keys | Where-Object {$_ -lt $lastDayToKeep}
+
+    foreach ($foundBackupId in $foundBackupIds)
+    {
+        $backupVhds = $foundBackups[$foundBackupId]
+        foreach ($backupVhd in $backupVhds)
+        {
+            $existingDisk = $existingVmDisks | Where-Object {$_.MediaLink -match $(".*" + $backupVhd.BlobName + "$")}
 
             if ($existingDisk -ne $null -and $existingDisk.AttachedTo -eq $null)
             {
@@ -120,22 +164,8 @@ if ($PSCmdlet.ParameterSetName -eq "KeepLast")
 
             if ($existingDisk -eq $null)
             {
-                Remove-AzureStorageBlob -Container $containerName -Blob $foundBackup.BlobName
-            }
-        }    
-    }
-}
-else
-{
-    # Remove the backups older than N days
-    $lastDayToKeep = ([Int64](Get-Date $((Get-Date).AddDays(-1 * ($OlderThanDays - 1))) -Format "yyyyMMdd")) * 10000
-    $foundBackups = $foundBackups | Where-Object {$_.BackupId -lt $lastDayToKeep}
-
-    foreach ($foundBackup in $foundBackups)
-    {
-        if (-not($existingVmOsDisks -contains $foundBackup.BlobName))
-        {
-            Remove-AzureStorageBlob -Container $containerName -Blob $foundBackup.BlobName
+                Remove-AzureStorageBlob -Container $containerName -Blob $backupVhd.BlobName
+            } 
         }
     }
 }

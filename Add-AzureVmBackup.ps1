@@ -45,12 +45,6 @@ if ($vm -eq $null)
     throw "A virtual machine with name $Name on $ServiceName does not exist."
 }
 
-if ($vm.VM.DataVirtualHardDisks.Count > 0)
-{
-    throw "VM has $($vm.VM.DataVirtualHardDisks.Count) data disks, cannot continue. Script is supported only for VMs `
-        with having an OS disk only"
-}
-
 $vmStopped = $false
 if ($vm.InstanceStatus -eq "ReadyRole" -and $vm.PowerState -eq "Started")
 {
@@ -67,7 +61,7 @@ if ($osDiskMediaLinkUri.Segments.Count -gt 3)
 
 # If it is a 3 part segment, first part willbe / second will be the container name, and third part will be the blob name
 $containerName = $osDiskMediaLinkUri.Segments[1].Replace("/","")
-$diskBlobName = $osDiskMediaLinkUri.Segments[2]
+$osDiskBlobName = $osDiskMediaLinkUri.Segments[2]
 
 $storageAccountName = $osDiskMediaLinkUri.Host.Split(".")[0]
 
@@ -80,30 +74,52 @@ if ($storageAccountName -ne $currentStorageAccountName)
     Set-AzureSubscription -SubscriptionName $currentAzureSubscription.SubscriptionName -CurrentStorageAccount $storageAccountName
 }
 
-$backupNamePrefix = $ServiceName + "-" + $Name + "_b_" + (Get-Date -Format "yyyy-MM-dd") + "-"
+$backupNameDelimeter = "_b_"
+$diskDelimeter = "_d_"
 
-$backNameRegex = $backupNamePrefix + "[0-9]{4}\.vhd$"
+$machineRef = $ServiceName + "-" + $Name
+$dateRef = Get-Date -Format "yyyy-MM-dd"
+$diskNumberPattern = "[0-9][0-9]"
+$backNameRegex = $machineRef + $backupNameDelimeter + $diskNumberPattern + $diskDelimeter + $dateRef + "-" + "[0-9]{4}\.vhd$"
+$backupNamePrefix = $machineRef + $backupNameDelimeter + "00" + $diskDelimeter + $dateRef + "-"
 
 $existingBackups = Get-AzureStorageBlob -Container $containerName | Where-Object {$_.Name -match "$backNameRegex"} | Select-Object Name
 
 $backupNumber = 0
 if($existingBackups -ne $null)
 {
-    $latestBackup = $existingBackups | ForEach-Object {[int]$_.Name.Substring($backupNamePrefix.Length, ($_.Name.Length - $backupNamePrefix.Length - 4))} | Measure-Object -Maximum
+    $latestBackup = $existingBackups | ForEach-Object {[int]$_.Name.Substring($backupNamePrefix.Length, ($_.Name.Length - $backupNamePrefix.Length - 4))} | Get-Unique | Measure-Object -Maximum
     $backupNumber = $latestBackup.Maximum + 1 
 }
 
-$backupName = $backupNamePrefix + "{0:0000}" -f $backupNumber + ".vhd"
+$backupNameSuffix = "{0:0000}" -f $backupNumber + ".vhd"
 
-$copiedBlob = Start-AzureStorageBlobCopy -SrcContainer $containerName -SrcBlob $diskBlobName -DestContainer $containerName -DestBlob $backupName
+$copiedBlobs = @()
+# Backup the OS disk first
+$diskNumber = 0
+$backupNamePrefix = $machineRef + $backupNameDelimeter + "{0:00}" -f $diskNumber + $diskDelimeter
+$backupName = $backupNamePrefix + $dateRef + "-" + $backupNameSuffix
+$copiedBlobs += Start-AzureStorageBlobCopy -SrcContainer $containerName -SrcBlob $osDiskBlobName -DestContainer $containerName -DestBlob $backupName
 
-$status = $null
+foreach ($disk in $vm.VM.DataVirtualHardDisks)
+{
+    $diskNumber += 1
+    $backupNamePrefix = $machineRef + $backupNameDelimeter + "{0:00}" -f $diskNumber + $diskDelimeter
+    $backupName = $backupNamePrefix + $dateRef + "-" + $backupNameSuffix
+    $copiedBlobs += Start-AzureStorageBlobCopy -SrcContainer $containerName -SrcBlob $osDiskBlobName -DestContainer $containerName -DestBlob $backupName
+}
+
 do
 {
     Start-Sleep -Seconds 10
-    $status = Get-AzureStorageBlobCopyState -ICloudBlob $copiedBlob.ICloudBlob
+    $statusCollection = $copiedBlobs | ForEach-Object {Get-AzureStorageBlobCopyState -ICloudBlob $_.ICloudBlob}
+    $copyDone = $true
+    foreach ($status in $statusCollection)
+    {
+        $copyDone = $copyDone -and ($status.Status -eq "Success")    
+    }
 }
-until ($status.Status -eq "Success")
+until ($copyDone)
 
 # Restore the original CurrentStorageAccount setting
 Set-AzureSubscription -SubscriptionName $currentAzureSubscription.SubscriptionName -CurrentStorageAccount $currentStorageAccountName

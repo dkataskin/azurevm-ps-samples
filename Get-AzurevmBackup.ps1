@@ -93,10 +93,11 @@
         }
     }
         
-    $backupNamePrefix = "_b_"
+    $backupNameDelimeter = "_b_"
+    $diskDelimeter = "_d_"
 
     $existingBackups = Get-AzureStorageBlob -Container $StorageAccountContainer | 
-        Where-Object {$_.Name -match $(".*" + $ServiceName + "-" + $Name + $backupNamePrefix +"[0-9]{4}-[0-9]{2}-[0-9]{2}-[0-9]{4}\.vhd$")} | 
+        Where-Object {$_.Name -match $(".*" + $ServiceName + "-" + $Name + $backupNameDelimeter + "[0-9][0-9]" + $diskDelimeter + "[0-9]{4}-[0-9]{2}-[0-9]{2}-[0-9]{4}\.vhd$")} | 
         Select-Object Name
 
     $foundBackups = @()
@@ -105,7 +106,7 @@
     {
         foreach ($existingBackup in $existingBackups)
         {
-            $parts = $existingBackup.Name -split $backupNamePrefix
+            $parts = $existingBackup.Name -split $backupNameDelimeter
             if ($parts.Count -ne 2)
             {
                 throw "Unexpected backup format for blob name $existingBackup"
@@ -122,7 +123,14 @@
                 $backupPart = $parts[1]
             }
             
-            $backupParts = $backupPart -split "-"
+            $backupParts = $backupPart -split $diskDelimeter
+            if ($backupParts.Count -ne 2)
+            {
+                throw "The backup name does not conform to the naming convention."
+            }
+            $diskNumber = $backupParts[0]
+
+            $backupParts = $backupParts[1] -split "-"
             if ($vmParts.Count -ne 2 -and $backupParts.Count -ne 4)
             {
                 throw "The backup name does not conform to the naming convention."
@@ -143,4 +151,4 @@
     # Restore the original CurrentStorageAccount setting
     Set-AzureSubscription -SubscriptionName $currentAzureSubscription.SubscriptionName -CurrentStorageAccount $currentStorageAccountName
 
-    $foundBackups 
+    $foundBackups | Sort-Object -Property BackupId
