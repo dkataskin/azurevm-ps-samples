@@ -127,9 +127,9 @@ $existingVmDisks = Get-AzureDisk
 if ($PSCmdlet.ParameterSetName -eq "KeepLast")
 {
     $index = 1
-    $foundBackupIds = $foundBackups.Keys | Sort-Object -Descending
+    $foundBackupIds = @($foundBackups.Keys | Sort-Object -Descending)
 
-    if ($foundBackupIds -eq $null)
+    if ($foundBackupIds -eq $null -or $foundBackupIds.Length -le $KeepLast)
     {
         Write-Warning "No backups found to remove."
     }
@@ -169,9 +169,9 @@ else
 {
     # Remove the backups older than N days
     $lastDayToKeep = ([Int64](Get-Date $((Get-Date).AddDays(-1 * ($OlderThanDays - 1))) -Format "yyyyMMdd")) * 10000
-    $foundBackupIds = $foundBackups.Keys | Where-Object {$_ -lt $lastDayToKeep}
+    $foundBackupIds = @($foundBackups.Keys | Where-Object {$_ -lt $lastDayToKeep})
 
-    if ($foundBackupIds -eq $null)
+    if ($foundBackupIds -eq $null -or $foundBackupIds.Length -eq 0)
     {
         Write-Warning "No backups found to remove."
     }
