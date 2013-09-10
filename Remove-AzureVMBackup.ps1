@@ -4,9 +4,19 @@
    assumes the backups are stored on the storage account pointed by the current subscription's CurrentStorageAccount property
 .DESCRIPTION
    Purge the old backups of a given VM, with one single disk. Any previous backups, before the last N, being used by a VM are skipped. 
+
+   OlderThanDays and KeepLast are mutually exclusive parameters.
 .EXAMPLE
-   .\Add-DomainControllerAndMemberServer.ps1 -ServiceName AService -Location "West US" -DomainControllerName dc `
-        -VNetName dcvnet -MemberServerName mem
+   For removing the last 5 backups of a given VM on a service:
+   .\Remove-AzureVMBackup -ServiceName aService -Name aVm -KeepLast 5
+
+   Removing all of the backups:
+   .\Remove-AzureVMBackup -ServiceName aService -Name aVm -KeepLast 0
+
+   Removing older than 3 days worth of backups
+   .\Remove-AzureVMBackup -ServiceName aService -Name aVm -OlderThanDays 0
+
+
 .INPUTS
    None
 .OUTPUTS
@@ -34,7 +44,7 @@ Param
     [String]
     $KeepLast,
 
-    # Last N backups to keep
+    # Last N days of backup to keep, and remove older ones
     [Parameter(Mandatory=$true, ParameterSetName='OlderThanDays')]
     [String]
     $OlderThanDays
@@ -121,7 +131,7 @@ if ($PSCmdlet.ParameterSetName -eq "KeepLast")
 
     if ($foundBackupIds -eq $null)
     {
-        Write-Output "No backups deleted with the specified criterias"
+        Write-Warning "No backups found to remove."
     }
     else
     {
@@ -138,13 +148,18 @@ if ($PSCmdlet.ParameterSetName -eq "KeepLast")
                     if ($existingDisk -ne $null -and $existingDisk.AttachedTo -eq $null)
                     {
                         Remove-AzureDisk -DiskName $existingDisk.DiskName 
-                        $existingDisk = $null
+                        Write-Verbose "Removed a disk using the backup blob."
                     }
 
                     if ($existingDisk -eq $null)
                     {
                         Remove-AzureStorageBlob -Container $containerName -Blob $backupVhd.BlobName
+                        Write-Verbose "Removed $backupVhd.BlobName"
                     }   
+                    else
+                    {
+                        Write-Warning "Found disk attached to a VM. DiskName: $existingDisk.DiskName, not removing the blob $backupVhd.BlobName"
+                    }
                 }            
             }    
         }
@@ -158,7 +173,7 @@ else
 
     if ($foundBackupIds -eq $null)
     {
-        Write-Output "No backups deleted with the specified criterias"
+        Write-Warning "No backups found to remove."
     }
     else
     {
@@ -172,6 +187,7 @@ else
                 if ($existingDisk -ne $null -and $existingDisk.AttachedTo -eq $null)
                 {
                     Remove-AzureDisk -DiskName $existingDisk.DiskName 
+                    Write-Verbose "Removed a disk using the backup blob."
                     $existingDisk = $null
                 }
 
@@ -179,6 +195,10 @@ else
                 {
                     Remove-AzureStorageBlob -Container $containerName -Blob $backupVhd.BlobName
                 } 
+                else
+                {
+                    Write-Warning "Found disk attached to a VM. DiskName: $existingDisk.DiskName, not removing the blob $backupVhd.BlobName"
+                }
             }
         }
     }
