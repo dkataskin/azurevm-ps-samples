@@ -119,12 +119,52 @@ if ($PSCmdlet.ParameterSetName -eq "KeepLast")
     $index = 1
     $foundBackupIds = $foundBackups.Keys | Sort-Object -Descending
 
-    foreach ($foundBackupId in $foundBackupIds)
+    if ($foundBackupIds -eq $null)
     {
-        if ($index++ -gt $KeepLast)
+        Write-Output "No backups deleted with the specified criterias"
+    }
+    else
+    {
+        foreach ($foundBackupId in $foundBackupIds)
+        {
+            if ($index++ -gt $KeepLast)
+            {
+                $backupVhds = $foundBackups[$foundBackupId]
+
+                foreach ($backupVhd in $backupVhds)
+                {
+                    $existingDisk = $existingVmDisks | Where-Object {$_.MediaLink -match $(".*" + $backupVhd.BlobName + "$")}
+
+                    if ($existingDisk -ne $null -and $existingDisk.AttachedTo -eq $null)
+                    {
+                        Remove-AzureDisk -DiskName $existingDisk.DiskName 
+                        $existingDisk = $null
+                    }
+
+                    if ($existingDisk -eq $null)
+                    {
+                        Remove-AzureStorageBlob -Container $containerName -Blob $backupVhd.BlobName
+                    }   
+                }            
+            }    
+        }
+    }
+}
+else
+{
+    # Remove the backups older than N days
+    $lastDayToKeep = ([Int64](Get-Date $((Get-Date).AddDays(-1 * ($OlderThanDays - 1))) -Format "yyyyMMdd")) * 10000
+    $foundBackupIds = $foundBackups.Keys | Where-Object {$_ -lt $lastDayToKeep}
+
+    if ($foundBackupIds -eq $null)
+    {
+        Write-Output "No backups deleted with the specified criterias"
+    }
+    else
+    {
+        foreach ($foundBackupId in $foundBackupIds)
         {
             $backupVhds = $foundBackups[$foundBackupId]
-
             foreach ($backupVhd in $backupVhds)
             {
                 $existingDisk = $existingVmDisks | Where-Object {$_.MediaLink -match $(".*" + $backupVhd.BlobName + "$")}
@@ -138,34 +178,8 @@ if ($PSCmdlet.ParameterSetName -eq "KeepLast")
                 if ($existingDisk -eq $null)
                 {
                     Remove-AzureStorageBlob -Container $containerName -Blob $backupVhd.BlobName
-                }   
-            }            
-        }    
-    }
-}
-else
-{
-    # Remove the backups older than N days
-    $lastDayToKeep = ([Int64](Get-Date $((Get-Date).AddDays(-1 * ($OlderThanDays - 1))) -Format "yyyyMMdd")) * 10000
-    $foundBackupIds = $foundBackups.Keys | Where-Object {$_ -lt $lastDayToKeep}
-
-    foreach ($foundBackupId in $foundBackupIds)
-    {
-        $backupVhds = $foundBackups[$foundBackupId]
-        foreach ($backupVhd in $backupVhds)
-        {
-            $existingDisk = $existingVmDisks | Where-Object {$_.MediaLink -match $(".*" + $backupVhd.BlobName + "$")}
-
-            if ($existingDisk -ne $null -and $existingDisk.AttachedTo -eq $null)
-            {
-                Remove-AzureDisk -DiskName $existingDisk.DiskName 
-                $existingDisk = $null
+                } 
             }
-
-            if ($existingDisk -eq $null)
-            {
-                Remove-AzureStorageBlob -Container $containerName -Blob $backupVhd.BlobName
-            } 
         }
     }
 }
